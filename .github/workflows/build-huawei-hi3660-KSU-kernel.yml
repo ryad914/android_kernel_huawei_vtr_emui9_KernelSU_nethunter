@@ -59,6 +59,8 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
         make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
+         ./scripts/config --disable CONFIG_DTC
+        make $KERNEL_CMDLINE olddefconfig
         make $KERNEL_CMDLINE -j$(nproc --all)
         wait
 
