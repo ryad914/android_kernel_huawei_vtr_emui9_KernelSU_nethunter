@@ -58,8 +58,8 @@ jobs:
         export PATH=$(pwd)/ToolChains/bin/:$PATH
         export ARCH=arm64
         export SUBARCH=arm64
-        echo "Patching DTC source files..."
         
+        echo "Patching DTC source files..."
         if [ -f "scripts/dtc/dtc-lexer.lex.c_shipped" ]; then
          sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped
          echo "Patched dtc-lexer.lex.c_shipped"
