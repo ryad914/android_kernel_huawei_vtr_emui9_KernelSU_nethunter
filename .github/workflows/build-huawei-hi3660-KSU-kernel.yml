@@ -41,6 +41,10 @@ jobs:
       run: |
         echo "TIME=$(TZ=UTC-8 date +%m%d%H%M )" >> $GITHUB_OUTPUT
 
+    - name: Patch DTC to fix multiple definition error
+      run: |
+       sed -i 's/YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c
+
     - name: Build Kernel
       run: |
        sudo ln -sf /usr/bin/python2.7 /usr/bin/python
