@@ -1,0 +1,44 @@
+name: Build Kernel Simple
+on: [workflow_dispatch, push]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup environment
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential libncurses5-dev bison flex libssl-dev libelf-dev bc wget
+
+    - name: Get toolchain
+      run: |
+        wget -q https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
+        tar -xf gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
+
+    - name: Build kernel
+      run: |
+        export PATH=$(pwd)/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu/bin:$PATH
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        
+        # Setup KernelSU
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
+        
+        # Build
+        make O=out Pangu_P10_KSU_defconfig
+        ./scripts/config --disable CONFIG_DTC
+        make O=out olddefconfig
+        make O=out -j$(nproc --all)
+        
+        # Create image
+        TIMESTAMP=$(date +%m%d%H%M)
+        tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz --base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-09-05  --output kernel-$TIMESTAMP.img
+
+    - name: Upload kernel
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-image
+        path: "*.img"
