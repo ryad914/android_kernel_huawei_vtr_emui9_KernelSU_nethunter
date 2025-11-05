@@ -1,5 +1,5 @@
-name: Build Kernel Fixed
-on: [workflow_dispatch, push]
+name: Build Kernel NoKSU
+on: [workflow_dispatch]
 
 jobs:
   build:
@@ -7,13 +7,11 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-      with:
-        submodules: recursive
 
     - name: Setup environment
       run: |
         sudo apt update
-        sudo apt install -y build-essential libncurses5-dev bison flex libssl-dev libelf-dev bc wget curl
+        sudo apt install -y build-essential libncurses5-dev bison flex libssl-dev libelf-dev bc wget
 
     - name: Get toolchain
       run: |
@@ -26,25 +24,17 @@ jobs:
         export ARCH=arm64
         export CROSS_COMPILE=aarch64-linux-gnu-
         
-        # Vérifier si KernelSU est déjà présent
-        if [ ! -d "drivers/kernelsu" ]; then
-          echo "Setting up KernelSU..."
-          # Utiliser la dernière version stable
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-        fi
-        
-        # Build
-        make O=out Pangu_P10_KSU_defconfig
+        # Build SANS KernelSU
+        make O=out Pangu_P10_defconfig
         ./scripts/config --disable CONFIG_DTC
         make O=out olddefconfig
         make O=out -j$(nproc --all)
         
-        # Create image
         TIMESTAMP=$(date +%m%d%H%M)
-        tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz --base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-09-05  --output kernel-$TIMESTAMP.img
+        tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz --base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-09-05  --output kernel-nethunter-$TIMESTAMP.img
 
     - name: Upload kernel
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-image
+        name: kernel-nethunter
         path: "*.img"
