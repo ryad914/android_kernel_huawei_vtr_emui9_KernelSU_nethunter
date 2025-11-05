@@ -1,4 +1,4 @@
-name: Build Kernel Simple
+name: Build Kernel Fixed
 on: [workflow_dispatch, push]
 
 jobs:
@@ -7,11 +7,13 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
     - name: Setup environment
       run: |
         sudo apt update
-        sudo apt install -y build-essential libncurses5-dev bison flex libssl-dev libelf-dev bc wget
+        sudo apt install -y build-essential libncurses5-dev bison flex libssl-dev libelf-dev bc wget curl
 
     - name: Get toolchain
       run: |
@@ -24,8 +26,12 @@ jobs:
         export ARCH=arm64
         export CROSS_COMPILE=aarch64-linux-gnu-
         
-        # Setup KernelSU
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
+        # Vérifier si KernelSU est déjà présent
+        if [ ! -d "drivers/kernelsu" ]; then
+          echo "Setting up KernelSU..."
+          # Utiliser la dernière version stable
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+        fi
         
         # Build
         make O=out Pangu_P10_KSU_defconfig
