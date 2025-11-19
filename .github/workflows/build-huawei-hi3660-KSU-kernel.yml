@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
@@ -66,8 +66,6 @@ jobs:
         
         make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
         
-        # DÉSACTIVER DTC
-        ./scripts/config --disable CONFIG_DTC
         make $KERNEL_CMDLINE olddefconfig
         
         make $KERNEL_CMDLINE -j$(nproc --all)
