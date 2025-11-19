@@ -1,40 +1,121 @@
-name: Build Kernel NoKSU
-on: [workflow_dispatch]
+name: Build Huawei-hi3660-KSU-Kernel-nethun
+on:
+  workflow_dispatch:
+  schedule:
+    # Run once at 12:00 on Saturday.. See http://crontab.guru
+    - cron: '00 12 * * 6'
+  push:
+    # Replace 'main' with your default branch if it's different
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_MAXSIZE: "2G"
+      CCACHE_HARDLINK: "true"
+      # variables de compilation passées à make (seront utilisées comme arguments)
+      KERNEL_CMDLINE: "ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out"
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: 'true'
+          fetch-depth: 0
 
-    - name: Setup environment
-      run: |
-        sudo apt update
-        sudo apt install -y build-essential libncurses5-dev bison flex libssl-dev libelf-dev bc wget
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
 
-    - name: Get toolchain
-      run: |
-        wget -q https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
-        tar -xf gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
+      - name: Install dependencies
+        run: |
+          set -e
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            binutils make python2 libssl-dev flex unzip ca-certificates xz-utils \
+            mkbootimg cpio device-tree-compiler git git-lfs bc bison build-essential \
+            ccache curl g++-multilib
+          # create a stable 'python' symlink pointing to python2
+          if [ ! -e /usr/bin/python ]; then
+            sudo ln -s /usr/bin/python2 /usr/bin/python || true
+          fi
+          # Clone toolchains (fixed --depth)
+          git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
 
-    - name: Build kernel
-      run: |
-        export PATH=$(pwd)/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu/bin:$PATH
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        
-        # Build SANS KernelSU
-        make O=out Pangu_P10_defconfig
-        ./scripts/config --disable CONFIG_DTC
-        make O=out olddefconfig
-        make O=out -j$(nproc --all)
-        
-        TIMESTAMP=$(date +%m%d%H%M)
-        tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz --base 0x0 --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user" --tags_offset 0x07A00000 --kernel_offset 0x00080000 --ramdisk_offset 0x07c00000 --header_version 1 --os_version 9 --os_patch_level 2020-09-05  --output kernel-nethunter-$TIMESTAMP.img
+      - name: GetTime
+        id: get_time
+        run: |
+          # TIME used to name artifacts
+          echo "TIME=$(TZ=UTC-8 date +%m%d%H%M)" >> $GITHUB_OUTPUT
 
-    - name: Upload kernel
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-nethunter
-        path: "*.img"
+      - name: Build Kernel (P10)
+        env:
+          TIME: ${{ steps.get_time.outputs.TIME }}
+          PATH: ${{ github.workspace }}/ToolChains/bin/:$PATH
+          ARCH: arm64
+          SUBARCH: arm64
+        run: |
+          set -euo pipefail
+          # ensure Python symlink (again, harmless if exists)
+          sudo ln -sf /usr/bin/python2 /usr/bin/python || true
+
+          # remove old generated config if present
+          if [ -d include/config ]; then
+            echo "Found include/config, removing it"
+            rm -rf include/config
+          fi
+
+          # remove previous KernelSU traces if any, then set up KernelSU
+          rm -rf KernelSU drivers/kernelsu || true
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
+
+          # build
+          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
+          make $KERNEL_CMDLINE -j$(nproc --all)
+
+          # build boot image (adjust cmdline as needed)
+          tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
+            --base 0x0 \
+            --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0" \
+            -o Pangu_P10_KSU-${TIME}.img
+
+      - name: Upload P10-KSU-Kernel
+        uses: actions/upload-artifact@v3
+        with:
+          name: Pangu_P10_KSU-kernel-${{ steps.get_time.outputs.TIME }}
+          path: "Pangu_P10_KSU-*.img"
+
+      - name: Build Kernel (V9)
+        env:
+          TIME: ${{ steps.get_time.outputs.TIME }}
+          PATH: ${{ github.workspace }}/ToolChains/bin/:$PATH
+          ARCH: arm64
+          SUBARCH: arm64
+        run: |
+          set -euo pipefail
+          if [ -d include/config ]; then
+            echo "Found include/config, removing it"
+            rm -rf include/config
+          fi
+
+          rm -rf KernelSU drivers/kernelsu out Pangu_P10_KSU-*.img || true
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
+
+          make $KERNEL_CMDLINE Pangu_KSU_defconfig
+          make $KERNEL_CMDLINE -j$(nproc --all)
+
+          tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
+            --base 0x0 \
+            --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0" \
+            -o Pangu_V9_KSU-${TIME}.img
+
+      - name: Upload V9-KSU-Kernel
+        uses: actions/upload-artifact@v3
+        with:
+          name: Pangu_V9_KSU-kernel-${{ steps.get_time.outputs.TIME }}
+          path: "Pangu_V9_KSU-*.img"
