@@ -1,11 +1,10 @@
-name: Build Huawei-hi3660-KSU-Kernel
+name: Build Huawei-hi3660-KSU-Kernel-n
 on:
   workflow_dispatch:
   schedule:
     # Run once at 12:00 on Saturday. See http://crontab.guru
     - cron: '00 12 * * 6'
   push:
-    # Remplacez 'main' par la branche par défaut de votre repo si nécessaire
     branches:
       - main
   pull_request:
@@ -14,7 +13,6 @@ on:
 
 jobs:
   build:
-    # Utiliser un runner GitHub-hosted
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -36,29 +34,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Mettre à jour les sources et installer outils d'ajout de PPA (pour add-apt-repository)
+          # Update lists and tools for add-apt-repository
           sudo apt-get update -y
-          sudo apt-get install -y software-properties-common
+          sudo apt-get install -y --no-install-recommends software-properties-common ca-certificates
 
-          # Ajouter le dépôt 'universe' (nécessaire pour python2 sur certaines images)
+          # Ensure 'universe' is enabled (needed on some images for python2 package)
           sudo add-apt-repository -y universe
           sudo apt-get update -y
 
-          # Installer d'abord python3 + dépendances usuelles, puis installer python2 explicitement
-          sudo apt-get install -y \
-            binutils make python3 libssl-dev flex unzip ca-certificates \
+          # Install required packages for cross-compiling to aarch64.
+          # NOTE: removed g++-multilib / gcc-multilib to avoid the i386 dependency error.
+          sudo apt-get install -y --no-install-recommends \
+            binutils make python3 libssl-dev flex unzip \
             xz-utils cpio device-tree-compiler git git-lfs bc bison \
-            build-essential ccache curl gcc-aarch64-linux-gnu g++-multilib
+            build-essential ccache curl gcc-aarch64-linux-gnu
 
-          # Installer python2 (disponible depuis 'universe' sur Ubuntu)
-          sudo apt-get install -y python2
+          # Install python2 if scripts require it (from universe)
+          sudo apt-get install -y --no-install-recommends python2 || true
 
-          # Créer un lien python -> python2 si des scripts attendent 'python'
-          if [ ! -e /usr/bin/python ]; then
-            sudo ln -s /usr/bin/python2 /usr/bin/python || true
+          # Ensure /usr/bin/python points to python2 when needed by legacy scripts
+          if [ -x "$(command -v python2)" ] && [ ! -e /usr/bin/python ]; then
+            sudo ln -s "$(command -v python2)" /usr/bin/python || true
           fi
 
-          # Clone toolchains (fix --depth)
+          # Clone toolchains (shallow)
           git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
 
       - name: GetTime
