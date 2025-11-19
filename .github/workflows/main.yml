@@ -30,19 +30,18 @@ jobs:
           submodules: 'true'
           fetch-depth: 0
 
-      - name: Runner & environment diagnostic
+      - name: Runner info
         run: |
           echo "RUNNER_OS=$RUNNER_OS"
           uname -a || true
           cat /etc/os-release || true
-          echo "Which: sudo=$(command -v sudo || echo none) rm=$(command -v rm || echo none) curl=$(command -v curl || echo none) bash=$(command -v bash || echo none)"
-          echo "PATH head:"
-          echo "$PATH" | tr ':' '\n' | sed -n '1,10p'
+          echo "PATH preview:"
+          echo "$PATH" | tr ':' '\n' | sed -n '1,20p'
 
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
 
-      - name: Install dependencies
+      - name: Install dependencies (including dtc/flex/bison)
         run: |
           set -euo pipefail
 
@@ -52,45 +51,38 @@ jobs:
             SUDO=""
           fi
 
+          # Use apt on ubuntu runners
           if command -v apt-get >/dev/null 2>&1; then
             echo "Using apt-get"
             $SUDO apt-get update -y
             $SUDO apt-get install -y --no-install-recommends software-properties-common ca-certificates
 
-            # Enable universe for python2 (if needed)
+            # Ensure universe for python2 if needed
             $SUDO add-apt-repository -y universe || true
             $SUDO apt-get update -y
 
-            # Install packages needed for cross-compiling to aarch64 (removed g++-multilib)
+            # Install required packages and explicit dtc/flex/bison
             $SUDO apt-get install -y --no-install-recommends \
-              binutils make python3 libssl-dev flex unzip \
-              xz-utils cpio device-tree-compiler git git-lfs bc bison \
+              binutils make python3 libssl-dev flex bison unzip ca-certificates \
+              xz-utils cpio device-tree-compiler libfdt-dev git git-lfs bc bison \
               build-essential ccache curl gcc-aarch64-linux-gnu
 
-            # Try installing python2 if needed (ignore failure)
+            # Try to install python2 if scripts expect it; ignore if unavailable
             $SUDO apt-get install -y --no-install-recommends python2 || true
 
+            # create python symlink only with sudo if necessary
             if command -v python2 >/dev/null 2>&1 && [ ! -e /usr/bin/python ]; then
-              $SUDO ln -s "$(command -v python2)" /usr/bin/python || true
-            fi
-          elif command -v apk >/dev/null 2>&1; then
-            echo "Using apk (Alpine) - installing available packages"
-            if [ -n "$SUDO" ]; then
-              $SUDO apk update
-              $SUDO apk add --no-cache bash coreutils curl build-base git git-lfs cpio xz
-            else
-              apk update
-              apk add --no-cache bash coreutils curl build-base git git-lfs cpio xz
+              $SUDO ln -sf "$(command -v python2)" /usr/bin/python || true
             fi
           else
-            echo "No supported package manager found (apt-get or apk)."
+            echo "Non-apt environment: aborting (workflow expects ubuntu-hosted runners)."
             exit 1
           fi
 
-          # Clone toolchains (shallow)
+          # Clone toolchains shallow
           git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
 
-          # Add ToolChains/bin to PATH for subsequent steps without overwriting system PATH
+          # Add ToolChains/bin to PATH for subsequent steps in a safe way
           echo "PATH=$(pwd)/ToolChains/bin:$PATH" >> $GITHUB_ENV
 
       - name: GetTime
@@ -106,8 +98,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Now ln/rm/curl should be available because PATH was preserved and augmented
-          ln -sf /usr/bin/python2 /usr/bin/python || true
+          # Ensure python link (use sudo where required)
+          if command -v sudo >/dev/null 2>&1; then
+            sudo ln -sf /usr/bin/python2 /usr/bin/python || true
+          else
+            ln -sf /usr/bin/python2 /usr/bin/python || true
+          fi
 
           if [ -d include/config ]; then
             echo "Found include/config, removing it"
@@ -115,11 +111,22 @@ jobs:
           fi
 
           rm -rf KernelSU drivers/kernelsu || true
+
+          # Use system dtc to avoid building conflicting shipped dtc
+          export SYSTEM_DTC="$(command -v dtc || true)"
+          if [ -z "$SYSTEM_DTC" ]; then
+            echo "WARNING: dtc not found in PATH; kernel build may build scripts/dtc from source"
+          else
+            echo "Using system dtc at $SYSTEM_DTC"
+          fi
+
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
 
-          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
-          make $KERNEL_CMDLINE -j$(nproc --all)
+          # Pass DTC=$(which dtc) to force using the system dtc binary
+          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig DTC="$(command -v dtc || true)"
+          make $KERNEL_CMDLINE -j$(nproc --all) DTC="$(command -v dtc || true)"
 
+          # Generate boot image; adjust options if needed
           tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
             --base 0x0 \
             --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0" \
@@ -147,8 +154,8 @@ jobs:
           rm -rf KernelSU drivers/kernelsu out Pangu_P10_KSU-*.img || true
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
 
-          make $KERNEL_CMDLINE Pangu_KSU_defconfig
-          make $KERNEL_CMDLINE -j$(nproc --all)
+          make $KERNEL_CMDLINE Pangu_KSU_defconfig DTC="$(command -v dtc || true)"
+          make $KERNEL_CMDLINE -j$(nproc --all) DTC="$(command -v dtc || true)"
 
           tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
             --base 0x0 \
