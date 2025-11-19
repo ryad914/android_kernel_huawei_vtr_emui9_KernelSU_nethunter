@@ -30,59 +30,32 @@ jobs:
           submodules: 'true'
           fetch-depth: 0
 
-      - name: Runner info
-        run: |
-          echo "RUNNER_OS=$RUNNER_OS"
-          uname -a || true
-          cat /etc/os-release || true
-          echo "PATH preview:"
-          echo "$PATH" | tr ':' '\n' | sed -n '1,20p'
-
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
 
-      - name: Install dependencies (including dtc/flex/bison)
+      - name: Install dependencies (including flex/bison/dtc)
         run: |
           set -euo pipefail
+          SUDO=""
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
 
-          if command -v sudo >/dev/null 2>&1; then
-            SUDO="sudo"
-          else
-            SUDO=""
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y --no-install-recommends \
+            software-properties-common ca-certificates \
+            binutils make python3 libssl-dev flex bison unzip \
+            xz-utils cpio device-tree-compiler libfdt-dev git git-lfs \
+            bc build-essential ccache curl gcc-aarch64-linux-gnu
+
+          # python2 optional (some legacy scripts)
+          $SUDO apt-get install -y --no-install-recommends python2 || true
+          if command -v python2 >/dev/null 2>&1 && [ ! -e /usr/bin/python ]; then
+            $SUDO ln -sf "$(command -v python2)" /usr/bin/python || true
           fi
 
-          # Use apt on ubuntu runners
-          if command -v apt-get >/dev/null 2>&1; then
-            echo "Using apt-get"
-            $SUDO apt-get update -y
-            $SUDO apt-get install -y --no-install-recommends software-properties-common ca-certificates
-
-            # Ensure universe for python2 if needed
-            $SUDO add-apt-repository -y universe || true
-            $SUDO apt-get update -y
-
-            # Install required packages and explicit dtc/flex/bison
-            $SUDO apt-get install -y --no-install-recommends \
-              binutils make python3 libssl-dev flex bison unzip ca-certificates \
-              xz-utils cpio device-tree-compiler libfdt-dev git git-lfs bc bison \
-              build-essential ccache curl gcc-aarch64-linux-gnu
-
-            # Try to install python2 if scripts expect it; ignore if unavailable
-            $SUDO apt-get install -y --no-install-recommends python2 || true
-
-            # create python symlink only with sudo if necessary
-            if command -v python2 >/dev/null 2>&1 && [ ! -e /usr/bin/python ]; then
-              $SUDO ln -sf "$(command -v python2)" /usr/bin/python || true
-            fi
-          else
-            echo "Non-apt environment: aborting (workflow expects ubuntu-hosted runners)."
-            exit 1
-          fi
-
-          # Clone toolchains shallow
+          # Clone toolchains (shallow)
           git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
 
-          # Add ToolChains/bin to PATH for subsequent steps in a safe way
+          # prepend ToolChains/bin to PATH safely for following steps
           echo "PATH=$(pwd)/ToolChains/bin:$PATH" >> $GITHUB_ENV
 
       - name: GetTime
@@ -90,43 +63,57 @@ jobs:
         run: |
           echo "TIME=$(TZ=UTC-8 date +%m%d%H%M)" >> $GITHUB_OUTPUT
 
+      - name: Prepare dtc (force consistent build or use system dtc)
+        run: |
+          set -euo pipefail
+          # If system dtc is present, prefer it
+          if command -v dtc >/dev/null 2>&1; then
+            echo "Using system dtc: $(command -v dtc)"
+            echo "DTC=$(command -v dtc)" >> $GITHUB_ENV
+          else
+            echo "No system dtc found — attempt to build scripts/dtc first"
+            # Remove SHIPPED generated sources that can conflict so flex/bison regenerate consistent files
+            rm -f scripts/dtc/dtc-lexer.lex.c scripts/dtc/dtc-parser.tab.c scripts/dtc/dtc-parser.tab.h || true
+            # Try to build dtc host tool (fallback)
+            make -C scripts/dtc HOSTCC="$(command -v gcc || true)" CC="$(command -v gcc || true)" -j$(nproc) || true
+            if command -v scripts/dtc/dtc >/dev/null 2>&1; then
+              echo "Built local scripts/dtc/dtc"
+              echo "DTC=$(pwd)/scripts/dtc/dtc" >> $GITHUB_ENV
+            elif command -v dtc >/dev/null 2>&1; then
+              echo "Found dtc after build in PATH: $(command -v dtc)"
+              echo "DTC=$(command -v dtc)" >> $GITHUB_ENV
+            else
+              echo "WARNING: dtc not available. Kernel build may still try to build scripts/dtc and fail."
+              echo "DTC=" >> $GITHUB_ENV
+            fi
+          fi
+
       - name: Build Kernel (P10)
         env:
           TIME: ${{ steps.get_time.outputs.TIME }}
           ARCH: arm64
           SUBARCH: arm64
+          # DTC will be read from $GITHUB_ENV set above
         run: |
           set -euo pipefail
 
-          # Ensure python link (use sudo where required)
-          if command -v sudo >/dev/null 2>&1; then
-            sudo ln -sf /usr/bin/python2 /usr/bin/python || true
-          else
-            ln -sf /usr/bin/python2 /usr/bin/python || true
-          fi
+          # ensure not to clobber PATH here — rely on $GITHUB_ENV
+          # make uses DTC variable to pick dtc binary
+          DTC_BIN="${DTC:-$(command -v dtc || true)}"
+          echo "DTC to use: $DTC_BIN"
 
+          # clean potential problematic config artifacts
           if [ -d include/config ]; then
-            echo "Found include/config, removing it"
             rm -rf include/config
           fi
 
           rm -rf KernelSU drivers/kernelsu || true
-
-          # Use system dtc to avoid building conflicting shipped dtc
-          export SYSTEM_DTC="$(command -v dtc || true)"
-          if [ -z "$SYSTEM_DTC" ]; then
-            echo "WARNING: dtc not found in PATH; kernel build may build scripts/dtc from source"
-          else
-            echo "Using system dtc at $SYSTEM_DTC"
-          fi
-
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
 
-          # Pass DTC=$(which dtc) to force using the system dtc binary
-          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig DTC="$(command -v dtc || true)"
-          make $KERNEL_CMDLINE -j$(nproc --all) DTC="$(command -v dtc || true)"
+          # pass DTC to make to force using the system/local dtc binary
+          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig DTC="$DTC_BIN"
+          make $KERNEL_CMDLINE -j$(nproc --all) DTC="$DTC_BIN"
 
-          # Generate boot image; adjust options if needed
           tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
             --base 0x0 \
             --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0" \
@@ -145,17 +132,15 @@ jobs:
           SUBARCH: arm64
         run: |
           set -euo pipefail
-
+          DTC_BIN="${DTC:-$(command -v dtc || true)}"
           if [ -d include/config ]; then
-            echo "Found include/config, removing it"
             rm -rf include/config
           fi
-
           rm -rf KernelSU drivers/kernelsu out Pangu_P10_KSU-*.img || true
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
 
-          make $KERNEL_CMDLINE Pangu_KSU_defconfig DTC="$(command -v dtc || true)"
-          make $KERNEL_CMDLINE -j$(nproc --all) DTC="$(command -v dtc || true)"
+          make $KERNEL_CMDLINE Pangu_KSU_defconfig DTC="$DTC_BIN"
+          make $KERNEL_CMDLINE -j$(nproc --all) DTC="$DTC_BIN"
 
           tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
             --base 0x0 \
