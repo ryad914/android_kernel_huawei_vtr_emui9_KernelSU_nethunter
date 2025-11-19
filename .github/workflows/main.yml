@@ -10,7 +10,6 @@ on:
     branches:
       - main
 
-# Définit bash comme shell par défaut pour toutes les étapes 'run'
 defaults:
   run:
     shell: bash
@@ -33,82 +32,66 @@ jobs:
 
       - name: Runner & environment diagnostic
         run: |
-          echo "=== Runner information ==="
-          # Affiche l'image / labels du runner (utile pour debug)
-          echo "GITHUB_RUNNER_LABELS=$RUNNER_LABELS"
           echo "RUNNER_OS=$RUNNER_OS"
-          echo "RUNNER_TOOL_CACHE=${RUNNER_TOOL_CACHE:-<unset>}"
-          echo "--------------------------------"
           uname -a || true
           cat /etc/os-release || true
-          echo "PATH=$PATH"
-          echo "Which core utils:"
-          which sudo || true
-          which rm || true
-          which bash || true
-          which curl || true
-          echo "Listing /bin and /usr/bin (head)"
-          ls -la /bin | head -30 || true
-          ls -la /usr/bin | head -30 || true
+          echo "Which: sudo=$(command -v sudo || echo none) rm=$(command -v rm || echo none) curl=$(command -v curl || echo none) bash=$(command -v bash || echo none)"
+          echo "PATH head:"
+          echo "$PATH" | tr ':' '\n' | sed -n '1,10p'
 
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
 
-      - name: Install dependencies (robuste)
+      - name: Install dependencies
         run: |
           set -euo pipefail
 
-          # Detecte si sudo existe ; si non, exécuter sans sudo (par ex. si root dans un container)
           if command -v sudo >/dev/null 2>&1; then
             SUDO="sudo"
           else
             SUDO=""
           fi
 
-          # Détecte le gestionnaire de paquets (apt pour Ubuntu/Debian, apk pour Alpine)
           if command -v apt-get >/dev/null 2>&1; then
             echo "Using apt-get"
             $SUDO apt-get update -y
             $SUDO apt-get install -y --no-install-recommends software-properties-common ca-certificates
 
-            # On active universe (pour python2 si nécessaire)
+            # Enable universe for python2 (if needed)
             $SUDO add-apt-repository -y universe || true
             $SUDO apt-get update -y
 
-            # Installer paquets pour cross-compile aarch64 ; on retire g++-multilib
+            # Install packages needed for cross-compiling to aarch64 (removed g++-multilib)
             $SUDO apt-get install -y --no-install-recommends \
               binutils make python3 libssl-dev flex unzip \
               xz-utils cpio device-tree-compiler git git-lfs bc bison \
               build-essential ccache curl gcc-aarch64-linux-gnu
 
-            # python2 (optionnel) ; ignore l'erreur si indisponible
+            # Try installing python2 if needed (ignore failure)
             $SUDO apt-get install -y --no-install-recommends python2 || true
 
-            # Assure un lien python -> python2 si python2 existe et si lien absent
             if command -v python2 >/dev/null 2>&1 && [ ! -e /usr/bin/python ]; then
               $SUDO ln -s "$(command -v python2)" /usr/bin/python || true
             fi
-
           elif command -v apk >/dev/null 2>&1; then
-            # Cas d'image Alpine minimal (container)
-            echo "Using apk (Alpine)"
+            echo "Using apk (Alpine) - installing available packages"
             if [ -n "$SUDO" ]; then
               $SUDO apk update
-              $SUDO apk add --no-cache bash coreutils curl build-base git git-lfs zlib-dev linux-headers cpio xz
+              $SUDO apk add --no-cache bash coreutils curl build-base git git-lfs cpio xz
             else
               apk update
-              apk add --no-cache bash coreutils curl build-base git git-lfs zlib-dev linux-headers cpio xz
+              apk add --no-cache bash coreutils curl build-base git git-lfs cpio xz
             fi
-
-            # Note: package names et toolchain diffèrent sur Alpine; si possible utilise ubuntu-latest runner
           else
-            echo "Unsupported environment: no apt-get or apk found. Print PATH and exit."
-            echo "PATH=$PATH"
+            echo "No supported package manager found (apt-get or apk)."
             exit 1
           fi
 
           # Clone toolchains (shallow)
           git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
+
+          # Add ToolChains/bin to PATH for subsequent steps without overwriting system PATH
+          echo "PATH=$(pwd)/ToolChains/bin:$PATH" >> $GITHUB_ENV
 
       - name: GetTime
         id: get_time
@@ -118,18 +101,13 @@ jobs:
       - name: Build Kernel (P10)
         env:
           TIME: ${{ steps.get_time.outputs.TIME }}
-          PATH: ${{ github.workspace }}/ToolChains/bin/:$PATH
           ARCH: arm64
           SUBARCH: arm64
         run: |
           set -euo pipefail
 
-          # Si sudo est présent, on l'utilise pour créer le lien; sinon on suppose qu'on est root
-          if command -v sudo >/dev/null 2>&1; then
-            sudo ln -sf /usr/bin/python2 /usr/bin/python || true
-          else
-            ln -sf /usr/bin/python2 /usr/bin/python || true
-          fi
+          # Now ln/rm/curl should be available because PATH was preserved and augmented
+          ln -sf /usr/bin/python2 /usr/bin/python || true
 
           if [ -d include/config ]; then
             echo "Found include/config, removing it"
@@ -156,7 +134,6 @@ jobs:
       - name: Build Kernel (V9)
         env:
           TIME: ${{ steps.get_time.outputs.TIME }}
-          PATH: ${{ github.workspace }}/ToolChains/bin/:$PATH
           ARCH: arm64
           SUBARCH: arm64
         run: |
