@@ -24,7 +24,7 @@ jobs:
       KERNEL_CMDLINE: "ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out"
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: 'true'
           fetch-depth: 0
@@ -94,7 +94,7 @@ jobs:
             -o Pangu_P10_KSU-${TIME}.img
 
       - name: Upload P10-KSU-Kernel
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Pangu_P10_KSU-kernel-${{ steps.get_time.outputs.TIME }}
           path: "Pangu_P10_KSU-*.img"
@@ -125,7 +125,7 @@ jobs:
             -o Pangu_V9_KSU-${TIME}.img
 
       - name: Upload V9-KSU-Kernel
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Pangu_V9_KSU-kernel-${{ steps.get_time.outputs.TIME }}
           path: "Pangu_V9_KSU-*.img"
