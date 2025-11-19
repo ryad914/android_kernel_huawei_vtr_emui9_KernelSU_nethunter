@@ -1,11 +1,11 @@
-name: Build Huawei-hi3660-KSU-Kernel-nethun
+name: Build Huawei-hi3660-KSU-Kernel
 on:
   workflow_dispatch:
   schedule:
-    # Run once at 12:00 on Saturday.. See http://crontab.guru
+    # Run once at 12:00 on Saturday. See http://crontab.guru
     - cron: '00 12 * * 6'
   push:
-    # Replace 'main' with your default branch if it's different
+    # Remplacez 'main' par la branche par défaut de votre repo si nécessaire
     branches:
       - main
   pull_request:
@@ -14,13 +14,13 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    # Utiliser un runner GitHub-hosted
+    runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_MAXSIZE: "2G"
       CCACHE_HARDLINK: "true"
-      # variables de compilation passées à make (seront utilisées comme arguments)
       KERNEL_CMDLINE: "ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out"
     steps:
       - name: Checkout
@@ -34,23 +34,22 @@ jobs:
 
       - name: Install dependencies
         run: |
-          set -e
+          set -euo pipefail
           sudo apt-get update -y
           sudo apt-get install -y \
-            binutils make python2 libssl-dev flex unzip ca-certificates xz-utils \
-            mkbootimg cpio device-tree-compiler git git-lfs bc bison build-essential \
-            ccache curl g++-multilib
-          # create a stable 'python' symlink pointing to python2
+            binutils make python2 libssl-dev flex unzip ca-certificates \
+            xz-utils cpio device-tree-compiler git git-lfs bc bison \
+            build-essential ccache curl gcc-aarch64-linux-gnu g++-multilib
+          # Assurer un lien python → python2 si nécessaire
           if [ ! -e /usr/bin/python ]; then
             sudo ln -s /usr/bin/python2 /usr/bin/python || true
           fi
-          # Clone toolchains (fixed --depth)
+          # Clone toolchains (fix --depth)
           git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
 
       - name: GetTime
         id: get_time
         run: |
-          # TIME used to name artifacts
           echo "TIME=$(TZ=UTC-8 date +%m%d%H%M)" >> $GITHUB_OUTPUT
 
       - name: Build Kernel (P10)
@@ -61,24 +60,20 @@ jobs:
           SUBARCH: arm64
         run: |
           set -euo pipefail
-          # ensure Python symlink (again, harmless if exists)
           sudo ln -sf /usr/bin/python2 /usr/bin/python || true
 
-          # remove old generated config if present
           if [ -d include/config ]; then
             echo "Found include/config, removing it"
             rm -rf include/config
           fi
 
-          # remove previous KernelSU traces if any, then set up KernelSU
           rm -rf KernelSU drivers/kernelsu || true
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
 
-          # build
           make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
           make $KERNEL_CMDLINE -j$(nproc --all)
 
-          # build boot image (adjust cmdline as needed)
+          # Générer l'image de boot; ajuste --cmdline/--base/--ramdisk/--dtb si nécessaire
           tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
             --base 0x0 \
             --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0" \
@@ -98,6 +93,7 @@ jobs:
           SUBARCH: arm64
         run: |
           set -euo pipefail
+
           if [ -d include/config ]; then
             echo "Found include/config, removing it"
             rm -rf include/config
