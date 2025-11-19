@@ -1,8 +1,7 @@
-name: Build Huawei-hi3660-KSU-Kernel-n
+name: Build Huawei-hi3660-KSU-Kernel
 on:
   workflow_dispatch:
   schedule:
-    # Run once at 12:00 on Saturday. See http://crontab.guru
     - cron: '00 12 * * 6'
   push:
     branches:
@@ -10,6 +9,11 @@ on:
   pull_request:
     branches:
       - main
+
+# Définit bash comme shell par défaut pour toutes les étapes 'run'
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
@@ -27,34 +31,80 @@ jobs:
           submodules: 'true'
           fetch-depth: 0
 
+      - name: Runner & environment diagnostic
+        run: |
+          echo "=== Runner information ==="
+          # Affiche l'image / labels du runner (utile pour debug)
+          echo "GITHUB_RUNNER_LABELS=$RUNNER_LABELS"
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_TOOL_CACHE=${RUNNER_TOOL_CACHE:-<unset>}"
+          echo "--------------------------------"
+          uname -a || true
+          cat /etc/os-release || true
+          echo "PATH=$PATH"
+          echo "Which core utils:"
+          which sudo || true
+          which rm || true
+          which bash || true
+          which curl || true
+          echo "Listing /bin and /usr/bin (head)"
+          ls -la /bin | head -30 || true
+          ls -la /usr/bin | head -30 || true
+
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
 
-      - name: Install dependencies
+      - name: Install dependencies (robuste)
         run: |
           set -euo pipefail
 
-          # Update lists and tools for add-apt-repository
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends software-properties-common ca-certificates
+          # Detecte si sudo existe ; si non, exécuter sans sudo (par ex. si root dans un container)
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          else
+            SUDO=""
+          fi
 
-          # Ensure 'universe' is enabled (needed on some images for python2 package)
-          sudo add-apt-repository -y universe
-          sudo apt-get update -y
+          # Détecte le gestionnaire de paquets (apt pour Ubuntu/Debian, apk pour Alpine)
+          if command -v apt-get >/dev/null 2>&1; then
+            echo "Using apt-get"
+            $SUDO apt-get update -y
+            $SUDO apt-get install -y --no-install-recommends software-properties-common ca-certificates
 
-          # Install required packages for cross-compiling to aarch64.
-          # NOTE: removed g++-multilib / gcc-multilib to avoid the i386 dependency error.
-          sudo apt-get install -y --no-install-recommends \
-            binutils make python3 libssl-dev flex unzip \
-            xz-utils cpio device-tree-compiler git git-lfs bc bison \
-            build-essential ccache curl gcc-aarch64-linux-gnu
+            # On active universe (pour python2 si nécessaire)
+            $SUDO add-apt-repository -y universe || true
+            $SUDO apt-get update -y
 
-          # Install python2 if scripts require it (from universe)
-          sudo apt-get install -y --no-install-recommends python2 || true
+            # Installer paquets pour cross-compile aarch64 ; on retire g++-multilib
+            $SUDO apt-get install -y --no-install-recommends \
+              binutils make python3 libssl-dev flex unzip \
+              xz-utils cpio device-tree-compiler git git-lfs bc bison \
+              build-essential ccache curl gcc-aarch64-linux-gnu
 
-          # Ensure /usr/bin/python points to python2 when needed by legacy scripts
-          if [ -x "$(command -v python2)" ] && [ ! -e /usr/bin/python ]; then
-            sudo ln -s "$(command -v python2)" /usr/bin/python || true
+            # python2 (optionnel) ; ignore l'erreur si indisponible
+            $SUDO apt-get install -y --no-install-recommends python2 || true
+
+            # Assure un lien python -> python2 si python2 existe et si lien absent
+            if command -v python2 >/dev/null 2>&1 && [ ! -e /usr/bin/python ]; then
+              $SUDO ln -s "$(command -v python2)" /usr/bin/python || true
+            fi
+
+          elif command -v apk >/dev/null 2>&1; then
+            # Cas d'image Alpine minimal (container)
+            echo "Using apk (Alpine)"
+            if [ -n "$SUDO" ]; then
+              $SUDO apk update
+              $SUDO apk add --no-cache bash coreutils curl build-base git git-lfs zlib-dev linux-headers cpio xz
+            else
+              apk update
+              apk add --no-cache bash coreutils curl build-base git git-lfs zlib-dev linux-headers cpio xz
+            fi
+
+            # Note: package names et toolchain diffèrent sur Alpine; si possible utilise ubuntu-latest runner
+          else
+            echo "Unsupported environment: no apt-get or apk found. Print PATH and exit."
+            echo "PATH=$PATH"
+            exit 1
           fi
 
           # Clone toolchains (shallow)
@@ -73,7 +123,13 @@ jobs:
           SUBARCH: arm64
         run: |
           set -euo pipefail
-          sudo ln -sf /usr/bin/python2 /usr/bin/python || true
+
+          # Si sudo est présent, on l'utilise pour créer le lien; sinon on suppose qu'on est root
+          if command -v sudo >/dev/null 2>&1; then
+            sudo ln -sf /usr/bin/python2 /usr/bin/python || true
+          else
+            ln -sf /usr/bin/python2 /usr/bin/python || true
+          fi
 
           if [ -d include/config ]; then
             echo "Found include/config, removing it"
@@ -86,7 +142,6 @@ jobs:
           make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
           make $KERNEL_CMDLINE -j$(nproc --all)
 
-          # Générer l'image de boot; ajuste --cmdline/--base/--ramdisk/--dtb si nécessaire
           tools/mkbootimg --kernel out/arch/arm64/boot/Image.gz \
             --base 0x0 \
             --cmdline "loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0" \
