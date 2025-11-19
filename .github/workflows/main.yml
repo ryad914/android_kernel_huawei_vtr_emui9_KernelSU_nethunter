@@ -1,4 +1,4 @@
-name: Build Huawei-hi3660-KSU-Kernel-nethun
+name: Build Huawei-hi3660-KSU-Kernel
 on:
   workflow_dispatch:
   schedule:
@@ -24,7 +24,7 @@ jobs:
       KERNEL_CMDLINE: "ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           submodules: 'true'
           fetch-depth: 0
@@ -35,18 +35,29 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
+
+          # Mettre à jour les sources et installer outils d'ajout de PPA (pour add-apt-repository)
+          sudo apt-get update -y
+          sudo apt-get install -y software-properties-common
+
+          # Ajouter le dépôt 'universe' (nécessaire pour python2 sur certaines images)
+          sudo add-apt-repository -y universe
+          sudo apt-get update -y
+
+          # Installer d'abord python3 + dépendances usuelles, puis installer python2 explicitement
           sudo apt-get install -y \
-          binutils make python3 libssl-dev flex unzip ca-certificates \
-          xz-utils cpio device-tree-compiler git git-lfs bc bison \
-          build-essential ccache curl gcc-aarch64-linux-gnu g++-multilib
-          # Assurer un lien python → python2 si nécessaire
+            binutils make python3 libssl-dev flex unzip ca-certificates \
+            xz-utils cpio device-tree-compiler git git-lfs bc bison \
+            build-essential ccache curl gcc-aarch64-linux-gnu g++-multilib
+
+          # Installer python2 (disponible depuis 'universe' sur Ubuntu)
+          sudo apt-get install -y python2
+
+          # Créer un lien python -> python2 si des scripts attendent 'python'
           if [ ! -e /usr/bin/python ]; then
-            sudo add-apt-repository universe
-            sudo apt-get update
-           sudo apt-get install -y python2
-           sudo ln -s /usr/bin/python2 /usr/bin/python || true
+            sudo ln -s /usr/bin/python2 /usr/bin/python || true
           fi
-          
+
           # Clone toolchains (fix --depth)
           git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
 
@@ -83,7 +94,7 @@ jobs:
             -o Pangu_P10_KSU-${TIME}.img
 
       - name: Upload P10-KSU-Kernel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: Pangu_P10_KSU-kernel-${{ steps.get_time.outputs.TIME }}
           path: "Pangu_P10_KSU-*.img"
@@ -114,7 +125,7 @@ jobs:
             -o Pangu_V9_KSU-${TIME}.img
 
       - name: Upload V9-KSU-Kernel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: Pangu_V9_KSU-kernel-${{ steps.get_time.outputs.TIME }}
           path: "Pangu_V9_KSU-*.img"
