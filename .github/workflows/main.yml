@@ -1,15 +1,15 @@
-name: Build Huawei-hi3660-KSU-Kernel (with AnyKernel3)
+name: Build Huawei-hi3660-NetHunter-KSU-Kernel
 
 on:
-  workflow_dispatch:        # يسمح بالتشغيل اليدوي
+  workflow_dispatch:
   schedule:
-    - cron: '00 12 * * 6'   # كل سبت الساعة 12 ظهراً
+    - cron: '00 12 * * 6'
   push:
     branches:
-      - HEAD
+      - Github_Action_Mode
   pull_request:
     branches:
-      - HEAD
+      - Github_Action_Mode
 
 jobs:
   build:
@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -y
-          sudo apt install -y binutils make python2 libssl-dev flex unzip libssl-dev \
+          sudo apt install -y binutils make python2 libssl-dev flex unzip \
             ca-certificates xz-utils mkbootimg cpio device-tree-compiler git git-lfs bc \
             bison build-essential ccache curl flex g++-multilib gcc-multilib gnupg gperf \
             imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev \
@@ -46,8 +46,6 @@ jobs:
         run: |
           make distclean || true
           rm -rf out
-          rm -rf KernelSU
-          rm -rf drivers/kernelsu
           find . -name "*.o" -delete 2>/dev/null || true
           find . -name "*.cmd" -delete 2>/dev/null || true
           find . -name "*.tmp" -delete 2>/dev/null || true
@@ -56,12 +54,10 @@ jobs:
         id: get_time
         run: echo "TIME=$(TZ=UTC-8 date +%m%d%H%M)" >> $GITHUB_OUTPUT
 
-      # ==================== بناء P10 ====================
-      - name: Build P10 Kernel
+      # ==================== بناء P10 NetHunter + KSU ====================
+      - name: Build P10 NetHunter with KSU (Enforcing)
         run: |
           sudo ln -sf /usr/bin/python2.7 /usr/bin/python
-          rm -rf KernelSU drivers/kernelsu
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
           export PATH=$(pwd)/ToolChains/bin/:$PATH
           export ARCH=arm64
           export SUBARCH=arm64
@@ -69,86 +65,110 @@ jobs:
           make $KERNEL_CMDLINE olddefconfig
           make $KERNEL_CMDLINE -j$(nproc --all)
 
-      - name: Package P10 kernel with AnyKernel3
+      - name: Package P10 NetHunter+KSU - Enforcing
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-p10
-          # نسخ Image.gz (مخرج البناء)
           cp out/arch/arm64/boot/Image.gz anykernel-p10/ || { echo "Image.gz not found!"; exit 1; }
-          # نسخ ملفات dtb إذا كانت موجودة
           if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
-            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-p10/ 2>/dev/null || echo "No dtb files found"
+            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-p10/ 2>/dev/null || true
           fi
-          # إنشاء نسختين (enforcing / permissive) بتعديل anykernel.sh
-          for mode in enforcing permissive; do
-            cp -r anykernel-p10 anykernel-p10-$mode
-            if [ "$mode" = "enforcing" ]; then
-              sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user"|' anykernel-p10-$mode/anykernel.sh
-            else
-              sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user"|' anykernel-p10-$mode/anykernel.sh
-            fi
-            cd anykernel-p10-$mode
-            zip -r9 ../../Pangu_P10_KSU-${mode}-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
-            cd ../..
-          done
-          rm -rf anykernel-p10*
+          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user"|' anykernel-p10/anykernel.sh
+          cd anykernel-p10
+          zip -r9 ../Pangu_P10_NetHunter_KSU-enforcing-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
+          cd ..
+          rm -rf anykernel-p10
 
-      # ==================== بناء V9 ====================
-      - name: Build V9 Kernel
+      - name: Build P10 NetHunter with KSU (Permissive)
         run: |
-          rm -rf out KernelSU drivers/kernelsu
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.2
+          rm -rf out
+          export PATH=$(pwd)/ToolChains/bin/:$PATH
+          export ARCH=arm64
+          export SUBARCH=arm64
+          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
+          make $KERNEL_CMDLINE olddefconfig
+          make $KERNEL_CMDLINE -j$(nproc --all)
+
+      - name: Package P10 NetHunter+KSU - Permissive
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-p10
+          cp out/arch/arm64/boot/Image.gz anykernel-p10/ || { echo "Image.gz not found!"; exit 1; }
+          if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
+            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-p10/ 2>/dev/null || true
+          fi
+          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user"|' anykernel-p10/anykernel.sh
+          cd anykernel-p10
+          zip -r9 ../Pangu_P10_NetHunter_KSU-permissive-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
+          cd ..
+          rm -rf anykernel-p10
+
+      # ==================== بناء V9 NetHunter + KSU ====================
+      - name: Build V9 NetHunter with KSU (Enforcing)
+        run: |
+          rm -rf out
           export PATH=$(pwd)/ToolChains/bin/:$PATH
           export ARCH=arm64
           export SUBARCH=arm64
           make $KERNEL_CMDLINE Pangu_KSU_defconfig
-          # تعطيل CONFIG_DTC (إذا لزم الأمر)
-          (cd out && ../scripts/config --file .config --disable CONFIG_DTC)
           make $KERNEL_CMDLINE olddefconfig
           make $KERNEL_CMDLINE -j$(nproc --all)
 
-      - name: Package V9 kernel with AnyKernel3
+      - name: Package V9 NetHunter+KSU - Enforcing
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-v9
           cp out/arch/arm64/boot/Image.gz anykernel-v9/ || { echo "Image.gz not found!"; exit 1; }
-          # تعديل مسار dtb حسب جهاز V9 (غالباً نفس المسار)
           if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
-            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-v9/ 2>/dev/null || echo "No dtb files found"
+            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-v9/ 2>/dev/null || true
           fi
-          for mode in enforcing permissive; do
-            cp -r anykernel-v9 anykernel-v9-$mode
-            if [ "$mode" = "enforcing" ]; then
-              sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user"|' anykernel-v9-$mode/anykernel.sh
-            else
-              sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user"|' anykernel-v9-$mode/anykernel.sh
-            fi
-            cd anykernel-v9-$mode
-            zip -r9 ../../Pangu_V9_KSU-${mode}-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
-            cd ../..
-          done
-          rm -rf anykernel-v9*
+          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user"|' anykernel-v9/anykernel.sh
+          cd anykernel-v9
+          zip -r9 ../Pangu_V9_NetHunter_KSU-enforcing-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
+          cd ..
+          rm -rf anykernel-v9
+
+      - name: Build V9 NetHunter with KSU (Permissive)
+        run: |
+          rm -rf out
+          export PATH=$(pwd)/ToolChains/bin/:$PATH
+          export ARCH=arm64
+          export SUBARCH=arm64
+          make $KERNEL_CMDLINE Pangu_KSU_defconfig
+          make $KERNEL_CMDLINE olddefconfig
+          make $KERNEL_CMDLINE -j$(nproc --all)
+
+      - name: Package V9 NetHunter+KSU - Permissive
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-v9
+          cp out/arch/arm64/boot/Image.gz anykernel-v9/ || { echo "Image.gz not found!"; exit 1; }
+          if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
+            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-v9/ 2>/dev/null || true
+          fi
+          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user"|' anykernel-v9/anykernel.sh
+          cd anykernel-v9
+          zip -r9 ../Pangu_V9_NetHunter_KSU-permissive-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
+          cd ..
+          rm -rf anykernel-v9
 
       # ==================== رفع الملفات الناتجة ====================
-      - name: Upload P10 kernels
+      - name: Upload P10 NetHunter+KSU kernels
         uses: actions/upload-artifact@v4
         with:
-          name: Pangu_P10_KSU-kernel-${{ steps.get_time.outputs.TIME }}
+          name: Pangu_P10_NetHunter_KSU-${{ steps.get_time.outputs.TIME }}
           path: |
-            Pangu_P10_KSU-enforcing-*.zip
-            Pangu_P10_KSU-permissive-*.zip
+            Pangu_P10_NetHunter_KSU-enforcing-*.zip
+            Pangu_P10_NetHunter_KSU-permissive-*.zip
 
-      - name: Upload V9 kernels
+      - name: Upload V9 NetHunter+KSU kernels
         uses: actions/upload-artifact@v4
         with:
-          name: Pangu_V9_KSU-kernel-${{ steps.get_time.outputs.TIME }}
+          name: Pangu_V9_NetHunter_KSU-${{ steps.get_time.outputs.TIME }}
           path: |
-            Pangu_V9_KSU-enforcing-*.zip
-            Pangu_V9_KSU-permissive-*.zip
+            Pangu_V9_NetHunter_KSU-enforcing-*.zip
+            Pangu_V9_NetHunter_KSU-permissive-*.zip
 
-      # خطوة تشخيصية (اختيارية) لعرض محتويات out/boot
-      - name: List boot files (debug)
+      - name: Debug - List built kernels
         if: always()
         run: |
-          echo "=== P10 build output ==="
-          ls -la out/arch/arm64/boot/ || true
-          echo "=== DTB files ==="
-          find out/arch/arm64/boot/dts -name "*.dtb" 2>/dev/null || echo "No dtb found"
+          echo "=== Build Complete ==="
+          ls -lh *.zip 2>/dev/null || echo "No kernels built"
+          echo "=== Boot files ==="
+          ls -la out/arch/arm64/boot/ 2>/dev/null || true
