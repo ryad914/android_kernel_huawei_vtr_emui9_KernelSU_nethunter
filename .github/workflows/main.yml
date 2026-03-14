@@ -9,45 +9,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout kernel source
-        uses: actions/checkout@v4
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison flex build-essential \
-            libssl-dev python3 make zip libncurses-dev \
-            liblz4-tool imagemagick git wget
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          bc bison flex build-essential \
+          libssl-dev python3 make zip \
+          libncurses-dev liblz4-tool imagemagick git wget
 
-      - name: Set environment variables
-        run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+    - name: Set environment variables
+      run: |
+        echo "ARCH=arm64" >> $GITHUB_ENV
+        echo "SUBARCH=arm64" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-      - name: Compile kernel
-        run: |
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          make Pangu_P10_defconfig
-          make -j$(nproc)
+    - name: Compile kernel
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        make Pangu_P10_defconfig
+        make -j$(nproc)
 
-      - name: Prepare kernel.img for TWRP
-        run: |
-          mkdir -p output
-          # Parfois le binaire s’appelle Image.gz-dtb, à adapter si besoin
-          if [ -f arch/arm64/boot/Image.gz-dtb ]; then
-            cp arch/arm64/boot/Image.gz-dtb output/kernel.img
-          elif [ -f arch/arm64/boot/Image ]; then
-            cp arch/arm64/boot/Image output/kernel.img
-          else
-            echo "Image du kernel non trouvée !"
-            exit 1
-          fi
+    - name: Prepare kernel.img for TWRP
+      run: |
+        mkdir -p output
+        if [ -f arch/arm64/boot/Image.gz-dtb ]; then
+          cp arch/arm64/boot/Image.gz-dtb output/kernel.img
+        elif [ -f arch/arm64/boot/Image ]; then
+          cp arch/arm64/boot/Image output/kernel.img
+        else
+          echo "Image du kernel non trouvée !"
+          exit 1
+        fi
 
-      - name: Upload kernel.img artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel.img
-          path: output/kernel.img
+    - name: Upload kernel.img artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel.img
+        path: output/kernel.img
