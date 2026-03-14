@@ -1,185 +1,81 @@
-name: Build Huawei-hi3660-NetHunter-KSU-Kernel
+name: Compiler le kernel NetHunter pour Huawei P10 (EMUI 9)
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '00 12 * * 6'
-  push:
-    branches:
-      - Github_Action_Mode
+  workflow_dispatch:        # Permet un lancement manuel
+  # push:
+  #   branches: [ "Github_Action_Mode" ]  # (Optionnel) se lance à chaque push
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    env:
-      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
-      CCACHE_NOHASHDIR: "true"
-      CCACHE_MAXSIZE: "2G"
-      CCACHE_HARDLINK: "true"
-      KERNEL_CMDLINE: "ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out"
+  build_kernel:
+    name: Build Kernel (AArch64)
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout repository
+      - name: 📥 Récupérer le code source
         uses: actions/checkout@v4
         with:
-          submodules: 'true'
-          fetch-depth: 100
+          fetch-depth: 0
+          submodules: 'recursive'
 
-      - name: Set up ccache
+      - name: 🔧 Installer les dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git ccache build-essential \
+            lzop \
+            libncurses5-dev \
+            libssl-dev \
+            qt5-default \
+            python3
+          gcc --version
+          python3 --version
+
+      - name: 📦 Définir les variables d'environnement
+        run: |
+          echo "KERNEL_SOURCE=${{ github.workspace }}" >> $GITHUB_ENV
+          echo "DEFCONFIG_NAME=Pangu_P10_defconfig" >> $GITHUB_ENV
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
+
+      - name: ⚙️ Configurer ccache
         uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: build-${{ env.DEFCONFIG_NAME }}
 
-      - name: Install dependencies
+      - name: ⬇️ Télécharger la toolchain (Android NDK)
         run: |
-          sudo apt-get update -y
-          sudo apt install -y binutils make python2 libssl-dev flex unzip \
-            ca-certificates xz-utils mkbootimg cpio device-tree-compiler git git-lfs bc \
-            bison build-essential ccache curl flex g++-multilib gcc-multilib gnupg gperf \
-            imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev \
-            liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libxml2 libxml2-utils \
-            lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev adb fastboot
-          git clone https://github.com/Coconutat/ToolChains.git --depth=1 -b linaro_gcc_4.9
+          mkdir -p $HOME/toolchains
+          cd $HOME/toolchains
+          wget https://dl.google.com/android/repository/android-ndk-r23c-linux.zip
+          unzip -q android-ndk-r23c-linux.zip
+          echo "$HOME/toolchains/android-ndk-r23c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          aarch64-linux-android-gcc --version
 
-      - name: Clean previous builds
+      - name: 🛠️ Nettoyer et configurer
+        working-directory: ${{ env.KERNEL_SOURCE }}
         run: |
-          make distclean || true
-          rm -rf out
-          find . -name "*.o" -delete 2>/dev/null || true
-          find . -name "*.cmd" -delete 2>/dev/null || true
-          find . -name "*.tmp" -delete 2>/dev/null || true
+          make mrproper
+          make ${{ env.DEFCONFIG_NAME }}
 
-      - name: Get build timestamp
-        id: get_time
-        run: echo "TIME=$(TZ=UTC-8 date +%m%d%H%M)" >> $GITHUB_OUTPUT
-
-      # ==================== بناء P10 NetHunter + KSU ====================
-      - name: Build P10 NetHunter with KSU (Enforcing)
+      - name: 🚀 Compiler le kernel
+        working-directory: ${{ env.KERNEL_SOURCE }}
         run: |
-          sudo ln -sf /usr/bin/python2.7 /usr/bin/python
-          export PATH=$(pwd)/ToolChains/bin/:$PATH
-          export ARCH=arm64
-          export SUBARCH=arm64
-          
-          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
-          make $KERNEL_CMDLINE olddefconfig
-          make $KERNEL_CMDLINE -j$(nproc --all)
+          export PATH="/usr/lib/ccache:$PATH"
+          make -j$(nproc) ARCH=${{ env.ARCH }} CROSS_COMPILE=${{ env.CROSS_COMPILE }} Image.gz-dtb
 
-      - name: Package P10 NetHunter+KSU - Enforcing
+      - name: 📦 Préparer le fichier kernel.img
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-p10
-          cp out/arch/arm64/boot/Image.gz anykernel-p10/ || { echo "Image.gz not found!"; exit 1; }
-          
-          if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
-            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-p10/ 2>/dev/null || true
-          fi
-          
-          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user"|' anykernel-p10/anykernel.sh
-          
-          cd anykernel-p10
-          zip -r9 ../Pangu_P10_NetHunter_KSU-enforcing-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
-          cd ..
-          rm -rf anykernel-p10
+          # Copier l'image compilée et la renommer en kernel.img
+          cp ${{ env.KERNEL_SOURCE }}/arch/arm64/boot/Image.gz-dtb ./kernel.img
+          # (Optionnel) Créer une archive tar.gz pour faciliter le téléchargement
+          tar -czf kernel-nethunter-p10.tar.gz kernel.img
 
-      - name: Build P10 NetHunter with KSU (Permissive)
-        run: |
-          rm -rf out
-          export PATH=$(pwd)/ToolChains/bin/:$PATH
-          export ARCH=arm64
-          export SUBARCH=arm64
-          
-          make $KERNEL_CMDLINE Pangu_P10_KSU_defconfig
-          make $KERNEL_CMDLINE olddefconfig
-          make $KERNEL_CMDLINE -j$(nproc --all)
-
-      - name: Package P10 NetHunter+KSU - Permissive
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-p10
-          cp out/arch/arm64/boot/Image.gz anykernel-p10/ || { echo "Image.gz not found!"; exit 1; }
-          
-          if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
-            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-p10/ 2>/dev/null || true
-          fi
-          
-          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user"|' anykernel-p10/anykernel.sh
-          
-          cd anykernel-p10
-          zip -r9 ../Pangu_P10_NetHunter_KSU-permissive-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
-          cd ..
-          rm -rf anykernel-p10
-
-      # ==================== بناء V9 NetHunter + KSU ====================
-      - name: Build V9 NetHunter with KSU (Enforcing)
-        run: |
-          rm -rf out
-          export PATH=$(pwd)/ToolChains/bin/:$PATH
-          export ARCH=arm64
-          export SUBARCH=arm64
-          
-          make $KERNEL_CMDLINE Pangu_KSU_defconfig
-          make $KERNEL_CMDLINE olddefconfig
-          make $KERNEL_CMDLINE -j$(nproc --all)
-
-      - name: Package V9 NetHunter+KSU - Enforcing
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-v9
-          cp out/arch/arm64/boot/Image.gz anykernel-v9/ || { echo "Image.gz not found!"; exit 1; }
-          
-          if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
-            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-v9/ 2>/dev/null || true
-          fi
-          
-          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=enforcing buildvariant=user"|' anykernel-v9/anykernel.sh
-          
-          cd anykernel-v9
-          zip -r9 ../Pangu_V9_NetHunter_KSU-enforcing-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
-          cd ..
-          rm -rf anykernel-v9
-
-      - name: Build V9 NetHunter with KSU (Permissive)
-        run: |
-          rm -rf out
-          export PATH=$(pwd)/ToolChains/bin/:$PATH
-          export ARCH=arm64
-          export SUBARCH=arm64
-          
-          make $KERNEL_CMDLINE Pangu_KSU_defconfig
-          make $KERNEL_CMDLINE olddefconfig
-          make $KERNEL_CMDLINE -j$(nproc --all)
-
-      - name: Package V9 NetHunter+KSU - Permissive
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel-v9
-          cp out/arch/arm64/boot/Image.gz anykernel-v9/ || { echo "Image.gz not found!"; exit 1; }
-          
-          if [ -d out/arch/arm64/boot/dts/hisilicon ]; then
-            cp out/arch/arm64/boot/dts/hisilicon/*.dtb anykernel-v9/ 2>/dev/null || true
-          fi
-          
-          sed -i 's|^cmdline=.*|cmdline="loglevel=4 initcall_debug=n page_tracker=on slub_min_objects=16 unmovable_isolate1=2:192M,3:224M,4:256M printktimer=0xfff0a000,0x534,0x538 androidboot.selinux=permissive buildvariant=user"|' anykernel-v9/anykernel.sh
-          
-          cd anykernel-v9
-          zip -r9 ../Pangu_V9_NetHunter_KSU-permissive-${{ steps.get_time.outputs.TIME }}.zip * -x .git README.md
-          cd ..
-          rm -rf anykernel-v9
-
-      # ==================== رفع الملفات ====================
-      - name: Upload P10 NetHunter+KSU kernels
+      - name: 📤 Uploader l'artefact (kernel.img)
         uses: actions/upload-artifact@v4
         with:
-          name: Pangu_P10_NetHunter_KSU-${{ steps.get_time.outputs.TIME }}
+          name: kernel-nethunter-p10
           path: |
-            Pangu_P10_NetHunter_KSU-enforcing-*.zip
-            Pangu_P10_NetHunter_KSU-permissive-*.zip
-
-      - name: Upload V9 NetHunter+KSU kernels
-        uses: actions/upload-artifact@v4
-        with:
-          name: Pangu_V9_NetHunter_KSU-${{ steps.get_time.outputs.TIME }}
-          path: |
-            Pangu_V9_NetHunter_KSU-enforcing-*.zip
-            Pangu_V9_NetHunter_KSU-permissive-*.zip
-
-      - name: Debug - List built kernels
-        if: always()
-        run: |
-          echo "=== Build Complete ==="
-          ls -lh *.zip 2>/dev/null || echo "No kernels built"
+            kernel.img
+            kernel-nethunter-p10.tar.gz
+          retention-days: 7
