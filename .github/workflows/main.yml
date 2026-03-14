@@ -1,4 +1,4 @@
-name: Compiler le kernel NetHunter pour Huawei P10 (EMUI 9)
+name: Compiler 1 le kernel NetHunter pour Huawei P10 (EMUI 9)
 
 on:
   workflow_dispatch:
