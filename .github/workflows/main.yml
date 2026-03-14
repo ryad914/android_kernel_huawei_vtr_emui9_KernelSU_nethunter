@@ -1,4 +1,4 @@
-name: Compiler 1 le kernel NetHunter pour Huawei P10 (EMUI 9)
+name: Compiler le kernel NetHunter pour Huawei P10 (EMUI 9)
 
 on:
   workflow_dispatch:
@@ -26,7 +26,9 @@ jobs:
             lzop \
             libncurses5-dev \
             libssl-dev \
-            python3
+            python3 \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
 
       - name: 📦 Définir les variables d'environnement
         run: |
@@ -34,21 +36,12 @@ jobs:
           echo "DEFCONFIG_NAME=Pangu_P10_defconfig" >> $GITHUB_ENV
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
       - name: ⚙️ Configurer ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: build-${{ env.DEFCONFIG_NAME }}
-
-      - name: ⬇️ Télécharger la toolchain (Android NDK)
-        run: |
-          mkdir -p $HOME/toolchains
-          cd $HOME/toolchains
-          wget https://dl.google.com/android/repository/android-ndk-r23c-linux.zip
-          unzip -q android-ndk-r23c-linux.zip
-          echo "$HOME/toolchains/android-ndk-r23c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-          aarch64-linux-android-gcc --version
 
       - name: 🛠️ Nettoyer et configurer
         working-directory: ${{ env.KERNEL_SOURCE }}
