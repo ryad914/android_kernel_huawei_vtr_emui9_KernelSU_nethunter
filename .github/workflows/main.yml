@@ -26,7 +26,6 @@ jobs:
             lzop \
             libncurses5-dev \
             libssl-dev \
-            qt5-default \
             python3
 
       - name: 📦 Définir les variables d'environnement
