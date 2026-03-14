@@ -1,4 +1,4 @@
-name: Compiler 1 le kernel NetHunter pour Huawei P10 (EMUI 9)
+name: Compiler le kernel NetHunter pour Huawei P10 (EMUI 9)
 
 on:
   workflow_dispatch:
@@ -15,8 +15,17 @@ jobs:
           fetch-depth: 0
           submodules: 'recursive'
 
-      - name: 🔄 Mettre à jour les sous-modules (KernelSU)
+      - name: 🔄 Mettre à jour les sous-modules
         run: git submodule update --init --recursive --force
+
+      - name: 🔧 S'assurer que KernelSU est présent
+        run: |
+          if [ ! -d "drivers/kernelsu" ]; then
+            echo "KernelSU dossier manquant, clonage en cours..."
+            git clone https://github.com/tiann/KernelSU.git drivers/kernelsu
+          else
+            echo "KernelSU dossier existant."
+          fi
 
       - name: 🔧 Installer les dépendances système
         run: |
@@ -60,7 +69,7 @@ jobs:
           cp ${{ env.KERNEL_SOURCE }}/arch/arm64/boot/Image.gz-dtb ./kernel.img
           tar -czf kernel-nethunter-p10.tar.gz kernel.img
 
-      - name: 📤 Uploader l'artefact (kernel.img)
+      - name: 📤 Uploader l'artefact
         uses: actions/upload-artifact@v4
         with:
           name: kernel-nethunter-p10
