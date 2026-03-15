@@ -40,7 +40,7 @@ jobs:
       - name: 📦 Définir les variables d'environnement
         run: |
           echo "KERNEL_SOURCE=${{ github.workspace }}" >> $GITHUB_ENV
-          echo "DEFCONFIG_NAME=Pangu_P10_defconfig" >> $GITHUB_ENV
+          echo "DEFCONFIG_NAME=Pangu_KSU_defconfig" >> $GITHUB_ENV
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
