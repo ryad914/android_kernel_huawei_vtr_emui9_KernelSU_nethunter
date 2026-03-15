@@ -14,17 +14,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🔧 Ajouter KernelSU manuellement
-        run: |
-          rm -rf drivers/kernelsu
-          git clone --depth=1 https://github.com/tiann/KernelSU.git drivers/kernelsu
-          echo "Contenu de drivers/kernelsu :"
-          ls -la drivers/kernelsu/
-          if [ ! -f "drivers/kernelsu/Kconfig" ]; then
-            echo "ERREUR: drivers/kernelsu/Kconfig manquant !"
-            exit 1
-          fi
-
       - name: 🔧 Installer les dépendances système
         run: |
           sudo apt-get update
